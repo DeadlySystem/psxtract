@@ -167,14 +167,18 @@ int decrypt_pgd(unsigned char* pgd_data, int pgd_size, int flag, unsigned char* 
 int decrypt_doc(unsigned char* data, int size)
 {
 	data += 0x10;  // Skip dummy PGD header.
-	size -= 0x10;  // Adjust size.
-
+	size -= 0x10;  // Adjust size.	
 	unsigned char *out = new unsigned char[size];
 
+	// Copy IV to save original untouched.
+	unsigned char *des_riv = new unsigned char[0x10];
+	memcpy(des_riv, des_iv, 0x10); 
+	
+	// Decrypt header.
 	// Perform DES CBC decryption.
 	des_context ctx;
 	des_setkey_dec(&ctx, des_key);
-	des_crypt_cbc(&ctx, DES_DECRYPT, size, des_iv, data, out);
+	des_crypt_cbc(&ctx, DES_DECRYPT, 0x60, des_riv, data, out);
 
 	// Check for "DOC" header in the decrypted data.
 	if ((out[0] == 0x44) &&
@@ -182,8 +186,19 @@ int decrypt_doc(unsigned char* data, int size)
 		(out[2] == 0x43) &&
 		(out[3] == 0x20))
 	{
+		//Fill 0x20 zero bytes after decrypted header.
+		memset (out + 0x60, 0, 0x20);
+
+		// Decrypt data.
+		// Perform DES CBC decryption.
+		memcpy(des_riv, des_iv, 0x10); // Restore IV from original.
+		des_context ctx;
+		des_setkey_dec(&ctx, des_key);
+		des_crypt_cbc(&ctx, DES_DECRYPT, size - 0x80, des_riv, data + 0x80 , out + 0x80);
+
 		// Copy back the decrypted data.
 		memcpy(data - 0x10, out, size);
+		delete[] des_riv;
 		delete[] out;
 		return 0;
 	}
@@ -199,12 +214,12 @@ int unpack_pbp(FILE *infile)
 	int maxbuffer = 16 * 1024 * 1024;
 	PBP_HEADER header;
 	int loop0;
-	int total_size;
+	unsigned long long total_size;
 
 	// Get the size of the PBP
-	fseek(infile, 0, SEEK_END);
-	total_size = ftell(infile);
-	fseek(infile, 0, SEEK_SET);
+	_fseeki64(infile, 0, SEEK_END);
+	total_size = _ftelli64(infile);
+	_fseeki64(infile, 0, SEEK_SET);
 
 	if (total_size < 0) {
 		printf("UNPACK_PBP ERROR: Could not get the input file size.\n");
@@ -228,7 +243,7 @@ int unpack_pbp(FILE *infile)
 	// For each file in the PBP
 	for (loop0 = 0; loop0 < 8; loop0++) {
 		void *buffer;
-		int size;
+		unsigned long long size;
 
 		// Get the size of this file
 		if (loop0 == 7) {
@@ -238,13 +253,13 @@ int unpack_pbp(FILE *infile)
 		}
 
 		// Print out the file details
-		printf("[%d] %10d bytes | %s\n", loop0, size, pbp_filenames[loop0]);
+		printf("[%d] 0x%08llX bytes | %s\n", loop0, size, pbp_filenames[loop0]);
 
 		// Skip the file if empty
 		if (!size) continue;
 
 		// Seek to the proper position in the file
-		if (fseek(infile, header.offset[loop0], SEEK_SET) != 0) {
+		if (_fseeki64(infile, header.offset[loop0], SEEK_SET) != 0) {
 			printf("UNPACK_PBP ERROR: Could not seek in the input file.\n");
 			return -1;
 		}
